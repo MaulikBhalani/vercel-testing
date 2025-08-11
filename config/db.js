@@ -1,50 +1,20 @@
 const mongoose = require("mongoose");
-const { GridFsStorage } = require("multer-gridfs-storage");
 const multer = require("multer");
-const path = require("path");
-const crypto = require("crypto");
-
-// Load environment variables
 require("dotenv").config();
 
-const mongoURI = process.env.MONGO_URI; // Your MongoDB Atlas connection string
+const mongoURI = process.env.MONGO_URI;
 
-// Create mongo connection
-const conn = mongoose.createConnection(mongoURI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+// Connect to MongoDB
+mongoose
+  .connect(mongoURI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => console.log("MongoDB connected for simple file storage"))
+  .catch((err) => console.error("MongoDB connection error:", err));
 
-// Init gfs
-let gfs;
+// Configure Multer to store files in memory as a buffer
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
-conn.once("open", () => {
-  // Init stream
-  gfs = new mongoose.mongo.GridFSBucket(conn.db, {
-    bucketName: "uploads", // Choose a bucket name for your files
-  });
-});
-
-// Create storage engine
-const storage = new GridFsStorage({
-  url: mongoURI,
-  file: (req, file) => {
-    return new Promise((resolve, reject) => {
-      crypto.randomBytes(16, (err, buf) => {
-        if (err) {
-          return reject(err);
-        }
-        const filename = buf.toString("hex") + path.extname(file.originalname);
-        const fileInfo = {
-          filename: filename,
-          bucketName: "uploads",
-        };
-        resolve(fileInfo);
-      });
-    });
-  },
-});
-
-const upload = multer({ storage });
-
-module.exports = { gfs, upload, conn };
+module.exports = { upload }; // Only export upload for the simple collection method

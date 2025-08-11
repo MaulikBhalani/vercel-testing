@@ -1,9 +1,9 @@
 const express = require("express");
 const app = express();
-const { gfs, upload, conn } = require("../config/db"); // Adjust path as needed
-const mongoose = require("mongoose");
+const { upload } = require("../config/db"); // Import only 'upload'
+const File = require("../models/File"); // Import your new File model
 
-// Body parser middleware (important for other routes, but file upload uses multer)
+// Body parser middleware (still good to have for other JSON payloads)
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
@@ -19,42 +19,72 @@ app.get("/api/users", (req, res) => {
   ]);
 });
 
-// API to upload a PDF file
-// 'file' should be the name attribute of your file input field in the form
-app.post("/api/upload-pdf", upload.single("file"), (req, res) => {
-  if (req.file) {
-    return res.status(201).json({
-      message: "PDF uploaded successfully",
-      fileId: req.file.id,
-      filename: req.file.filename,
-    });
+// API to upload a PDF file (simplified)
+app.post("/api/upload-pdf", upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: "No file uploaded" });
   }
-  res.status(400).json({ message: "No file uploaded" });
+
+  // Check file size (optional, but good practice for your 1MB limit)
+  if (req.file.size > 1024 * 1024) {
+    // 1 MB in bytes
+    return res.status(400).json({ message: "File exceeds 1MB limit." });
+  }
+
+  try {
+    const newFile = new File({
+      filename: req.file.originalname, // Use original filename from upload
+      contentType: req.file.mimetype,
+      fileData: req.file.buffer, // The binary data from multer.memoryStorage()
+    });
+
+    await newFile.save();
+
+    res.status(201).json({
+      message: "PDF uploaded successfully to simple collection",
+      fileId: newFile._id,
+      filename: newFile.filename,
+    });
+  } catch (error) {
+    console.error("Error saving file to MongoDB:", error);
+    res.status(500).json({ message: "Server error during file upload" });
+  }
 });
 
-// API to retrieve a PDF file by filename
-app.get("/api/pdf/:filename", (req, res) => {
-  const filename = req.params.filename;
+// API to retrieve a PDF file by ID or filename (using a query param)
+app.get("/api/pdf", async (req, res) => {
+  const fileId = req.query.id;
+  const filename = req.query.filename;
 
-  if (!gfs) {
-    return res.status(500).json({ message: "GridFS not initialized" });
+  if (!fileId && !filename) {
+    return res
+      .status(400)
+      .json({ message: "Please provide either file ID or filename." });
   }
 
-  gfs.find({ filename }).toArray((err, files) => {
-    if (!files || files.length === 0) {
-      return res.status(404).json({ message: "No file exists" });
+  try {
+    let file;
+    if (fileId) {
+      file = await File.findById(fileId);
+    } else {
+      file = await File.findOne({ filename });
     }
 
-    // If file exists and is a PDF
-    if (files[0].contentType === "application/pdf") {
-      res.set("Content-Type", files[0].contentType);
-      res.set("Content-Disposition", `inline; filename="${files[0].filename}"`); // Or 'attachment' to force download
-      const readstream = gfs.openDownloadStreamByName(filename);
-      readstream.pipe(res);
-    } else {
-      res.status(400).json({ message: "File is not a PDF" });
+    if (!file) {
+      return res.status(404).json({ message: "File not found." });
     }
-  });
+
+    if (file.contentType === "application/pdf") {
+      res.set("Content-Type", file.contentType);
+      res.set("Content-Disposition", `inline; filename="${file.filename}"`);
+      res.send(file.fileData); // Send the binary buffer directly
+    } else {
+      res.status(400).json({ message: "File is not a PDF." });
+    }
+  } catch (error) {
+    console.error("Error retrieving file from MongoDB:", error);
+    res.status(500).json({ message: "Server error during file retrieval" });
+  }
 });
 
 // Important: Export the app for Vercel
